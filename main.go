@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -13,12 +14,20 @@ func main() {
 	var inputFile string
 	var pathPrefix string
 	var textMap struct {
-		changes map[string]bool
-		log     map[string]string
+		changes         map[string]bool
+		deprecations    map[string]bool
+		log             map[string]string
+		resourceAdd     map[string]int
+		resourceChange  map[string]int
+		resourceDestroy map[string]int
 	}
 
 	textMap.log = map[string]string{}
 	textMap.changes = map[string]bool{}
+	textMap.deprecations = map[string]bool{}
+	textMap.resourceAdd = map[string]int{}
+	textMap.resourceChange = map[string]int{}
+	textMap.resourceDestroy = map[string]int{}
 
 	flag.StringVar(&inputFile, "f", "", "Input File")
 	flag.StringVar(&pathPrefix, "p", "", "Prefix to remove")
@@ -31,27 +40,62 @@ func main() {
 	fileScanner := bufio.NewScanner(readFile)
 
 	fileScanner.Split(bufio.ScanLines)
-	r, _ := regexp.Compile(`^\[(.*?)\]\s(.*)$`)
+	lregex, _ := regexp.Compile(`^\[(.*?)\]\s(.*)$`)
+	pregex, _ := regexp.Compile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy.`)
 	for fileScanner.Scan() {
 		line := fileScanner.Text()
-		x := r.FindStringSubmatch(line)
+		x := lregex.FindStringSubmatch(line)
 		if len(x) != 3 {
 			fmt.Println(line)
 			continue
 		}
 		key := x[1]
 		value := x[2]
+		if strings.Contains(value, "Plan:") {
+			m := pregex.FindStringSubmatch(value)
+			textMap.resourceAdd[key], _ = strconv.Atoi(m[1])
+			textMap.resourceChange[key], _ = strconv.Atoi(m[2])
+			textMap.resourceDestroy[key], _ = strconv.Atoi(m[3])
+		}
 		if strings.Contains(value, "will perform the following actions") {
 			textMap.changes[key] = true
 		}
+		if strings.Contains(value, "Warning: Argument is deprecated") {
+			textMap.deprecations[key] = true
+		}
+
 		textMap.log[key] += fmt.Sprintf("%s\n", value)
 	}
 
 	readFile.Close()
 
+	fmt.Println("##[section] Deprecations")
+	for k, v := range textMap.log {
+		if _, ok := textMap.deprecations[k]; !ok {
+			continue
+		}
+		fmt.Printf("##[group] Module: %s\n\n\n", strings.TrimPrefix(k, pathPrefix))
+		fmt.Println(v)
+		fmt.Printf("\n\n\n##[endgroup]\n")
+	}
 	fmt.Println("##[section] Changes")
 	for k, v := range textMap.log {
 		if _, ok := textMap.changes[k]; !ok {
+			continue
+		}
+		if textMap.resourceDestroy[k] > 0 {
+			continue
+		}
+		fmt.Printf("##[group] Module: %s\n\n\n", strings.TrimPrefix(k, pathPrefix))
+		fmt.Println(v)
+		fmt.Printf("\n\n\n##[endgroup]\n")
+	}
+	fmt.Println("##[section] Changes with destroy")
+	for k, v := range textMap.log {
+		if _, ok := textMap.changes[k]; !ok {
+			continue
+		}
+		if textMap.resourceDestroy[k] == 0 {
 			continue
 		}
 		fmt.Printf("##[group] Module: %s\n\n\n", strings.TrimPrefix(k, pathPrefix))
