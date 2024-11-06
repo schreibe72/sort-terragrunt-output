@@ -41,7 +41,7 @@ func main() {
 
 	fileScanner.Split(bufio.ScanLines)
 	lregex, _ := regexp.Compile(`^\[(.*?)\]\s(.*)$`)
-	pregex, _ := regexp.Compile(`Plan: (\d+) to add, (\d+) to change, (\d+) to destroy.`)
+	pregex, _ := regexp.Compile(`Plan:\s*(\d+)\s*to add,\s*(\d+)\s*to change,\s*(\d+)\s*to destroy.`)
 	for fileScanner.Scan() {
 		line := fileScanner.Text()
 		x := lregex.FindStringSubmatch(line)
@@ -74,7 +74,7 @@ func main() {
 		if _, ok := textMap.deprecations[k]; !ok {
 			continue
 		}
-		fmt.Printf("##[group] Module: %s\n\n\n", strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
 		fmt.Printf("\n\n\n##[endgroup]\n")
 	}
@@ -86,7 +86,7 @@ func main() {
 		if textMap.resourceDestroy[k] > 0 {
 			continue
 		}
-		fmt.Printf("##[group] Module: %s\n\n\n", strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
 		fmt.Printf("\n\n\n##[endgroup]\n")
 	}
@@ -98,7 +98,7 @@ func main() {
 		if textMap.resourceDestroy[k] == 0 {
 			continue
 		}
-		fmt.Printf("##[group] Module: %s\n\n\n", strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
 		fmt.Printf("\n\n\n##[endgroup]\n")
 	}
@@ -107,7 +107,7 @@ func main() {
 		if _, ok := textMap.changes[k]; ok {
 			continue
 		}
-		fmt.Printf("##[group] Module: %s\n\n\n", strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
 		fmt.Printf("\n\n\n##[endgroup]\n")
 	}
