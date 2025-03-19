@@ -40,7 +40,7 @@ func main() {
 	fileScanner := bufio.NewScanner(readFile)
 
 	fileScanner.Split(bufio.ScanLines)
-	lregex, _ := regexp.Compile(`STDOUT \[(.*?)\]\s(.*)$`)
+	lregex, _ := regexp.Compile(`STDOUT\s\[(.*?)\]\stofu:\s(.*)$`)
 	pregex, _ := regexp.Compile(`Plan:\s*(\d+)\s*to add,\s*(\d+)\s*to change,\s*(\d+)\s*to destroy.`)
 	for fileScanner.Scan() {
 		line := fileScanner.Text()
