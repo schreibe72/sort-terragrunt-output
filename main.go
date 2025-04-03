@@ -69,7 +69,7 @@ func main() {
 
 	readFile.Close()
 
-	fmt.Printf("===============================\n⚠️ Changes with destroy\n===============================\n")
+	fmt.Printf("===============================\n⚠️ Changes with destroy\n\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.changes[k]; !ok {
 			continue
@@ -81,7 +81,7 @@ func main() {
 		fmt.Println(v)
 		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Printf("===============================\n🚀 Changes\n===============================\n")
+	fmt.Printf("===============================\n🚀 Changes\n\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.changes[k]; !ok {
 			continue
@@ -93,7 +93,7 @@ func main() {
 		fmt.Println(v)
 		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Printf("===============================\n🕒 Deprications\n===============================\n")
+	fmt.Printf("===============================\n🕒 Deprications\n\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.deprecations[k]; !ok {
 			continue
@@ -102,7 +102,7 @@ func main() {
 		fmt.Println(v)
 		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Printf("===============================\n🎉 No Changes\n===============================\n")
+	fmt.Printf("===============================\n🎉 No Changes\n\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.changes[k]; ok {
 			continue
@@ -111,4 +111,5 @@ func main() {
 		fmt.Println(v)
 		fmt.Printf("\n\n\n::endgroup::\n")
 	}
+	fmt.Printf("\n===============================\n")
 }
