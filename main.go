@@ -93,7 +93,7 @@ func main() {
 		fmt.Println(v)
 		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Printf("===============================\n🕒 Deprications\n\n")
+	fmt.Printf("===============================\n🕒 Deprecations\n\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.deprecations[k]; !ok {
 			continue
