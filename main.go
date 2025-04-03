@@ -69,7 +69,7 @@ func main() {
 
 	readFile.Close()
 
-	fmt.Println("##[section] Changes with destroy")
+	fmt.Printf("===============================\n⚠️ Changes with destroy\n===============================\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.changes[k]; !ok {
 			continue
@@ -77,11 +77,11 @@ func main() {
 		if textMap.resourceDestroy[k] == 0 {
 			continue
 		}
-		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
-		fmt.Printf("\n\n\n##[endgroup]\n")
+		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Println("##[section] Changes")
+	fmt.Printf("===============================\n🚀 Changes\n===============================\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.changes[k]; !ok {
 			continue
@@ -89,26 +89,26 @@ func main() {
 		if textMap.resourceDestroy[k] > 0 {
 			continue
 		}
-		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
-		fmt.Printf("\n\n\n##[endgroup]\n")
+		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Println("##[section] Deprecations")
+	fmt.Printf("===============================\n🕒 Deprications\n===============================\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.deprecations[k]; !ok {
 			continue
 		}
-		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
-		fmt.Printf("\n\n\n##[endgroup]\n")
+		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Println("##[section] No Changes")
+	fmt.Printf("===============================\n🎉 No Changes\n===============================\n")
 	for k, v := range textMap.log {
 		if _, ok := textMap.changes[k]; ok {
 			continue
 		}
-		fmt.Printf("##[group] Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
+		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
 		fmt.Println(v)
-		fmt.Printf("\n\n\n##[endgroup]\n")
+		fmt.Printf("\n\n\n::endgroup::\n")
 	}
 }
