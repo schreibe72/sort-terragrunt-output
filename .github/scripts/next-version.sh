@@ -7,7 +7,8 @@
 #
 # Usage: next-version.sh [release|rc]
 #   release (default)  vX.Y.Z
-#   rc                 vX.Y.Z-rc.N, N counts up per base version
+#   rc                 vX.Y.Z-rc.N, N counts up per base version; no new
+#                      release if HEAD already has an rc tag
 #
 # Prints "version=...", "release=true|false" and "prerelease=true|false"
 # (GITHUB_OUTPUT format).
@@ -27,6 +28,18 @@ emit() {
   echo "release=$release"
   echo "prerelease=$([ "$mode" = rc ] && echo true || echo false)"
 }
+
+# A re-run on a commit that already has a release candidate must not mint
+# another one for the same commit.
+if [ "$mode" = rc ]; then
+  existing=$(git tag --points-at HEAD --list 'v[0-9]*-rc.*' | sort -V | tail -n1)
+  if [ -n "$existing" ]; then
+    echo "version=$existing"
+    echo "release=false"
+    echo "prerelease=true"
+    exit 0
+  fi
+fi
 
 last=$(git describe --tags --abbrev=0 --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' 2>/dev/null || true)
 

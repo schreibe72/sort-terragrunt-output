@@ -6,8 +6,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Version numbers are global, so all runs that publish share a group: one for
+# final releases, one for release candidates. Pull requests only run the tests.
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || (github.ref == 'refs/heads/main' && 'release-final' || 'release-rc') }}
   cancel-in-progress: false
 
 permissions:
@@ -100,6 +102,14 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
           PRERELEASE: ${{ needs.version.outputs.prerelease }}
         run: |
+          # A release becomes public only after all assets are uploaded, so a
+          # failed upload leaves an unpublished draft, never a half-finished
+          # release. A draft left over from a failed run is replaced.
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.draft and .tag_name == env.VERSION) | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
+
           flags=()
           if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
           gh release create "$VERSION" dist/* \
@@ -107,4 +117,6 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "$VERSION" \
             --generate-notes \
+            --draft \
             "${flags[@]}"
+          gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false

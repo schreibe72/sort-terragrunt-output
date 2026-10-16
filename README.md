@@ -155,6 +155,20 @@ The version is derived from the commits since the latest `v*` tag
 | `feat:` / `feat(scope):` | minor |
 | anything else | patch |
 
-Release candidates do not count as a base for the next version. The first
-release is `v0.1.0`. Without new commits since the last final tag, no release
-is created.
+Release candidates do not count as a base for the next version. Without any
+tag the first release would be `v0.1.0`. Without new commits since the last
+final tag, no release is created, and a re-run on a commit that already has a
+release candidate does not create another one.
+
+A release is created as a draft, all files are uploaded, and only then it is
+published. If a run fails in between, no half-finished release is visible; a
+re-run replaces the leftover draft.
+
+Publishing runs of the same kind (final releases, release candidates) are
+queued one after another, so version numbers cannot collide.
+
+**Merging a pull request:** the version depends on the commit subjects. With a
+merge commit or a rebase the commits of the branch count. With a squash merge
+the squash commit counts, and GitHub uses the pull request title for a pull
+request with several commits, so give the title a `feat:` / `fix:` prefix and
+do not shorten it to a plain subject.
