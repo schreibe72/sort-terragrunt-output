@@ -249,7 +249,7 @@ func testFormatters() map[string]formatter {
 		"github":   githubFormatter{},
 		"azure":    azureFormatter{},
 		"gitlab":   &gitlabFormatter{now: func() int64 { return 1700000000 }},
-		"markdown": markdownFormatter{},
+		"markdown": &markdownFormatter{},
 		"plain":    plainFormatter{},
 	}
 }
@@ -351,5 +351,59 @@ func TestVersionFlag(t *testing.T) {
 	build("-ldflags", "-X main.version=v1.2.3")
 	if got := version(); got != "v1.2.3" {
 		t.Errorf("injected version = %q, want v1.2.3", got)
+	}
+}
+
+func TestMarkdown(t *testing.T) {
+	in := strings.Join([]string{
+		"Error: Invalid value for <input> ``` foo",
+		"\x1b[31m├── unit\x1b[0m",
+		line("/a<b>", "plan with ```` four ticks"),
+	}, "\n")
+	var out bytes.Buffer
+	if err := run(strings.NewReader(in), &out, "", &markdownFormatter{}); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+
+	// raw lines are collected in one fence at the top, without colors; the
+	// fence is longer than the ``` inside the first line
+	if !strings.HasPrefix(got, "<details>\n<summary>Terragrunt output</summary>\n\n````\nError: Invalid value for <input> ``` foo\n├── unit\n````\n") {
+		t.Errorf("raw lines not fenced correctly:\n%s", got)
+	}
+	// the fence around a module is longer than the longest backtick run in its log
+	if !strings.Contains(got, "`````\nplan with ```` four ticks\n`````\n") {
+		t.Errorf("module fence too short:\n%s", got)
+	}
+	// titles are escaped
+	if !strings.Contains(got, "<summary>Module[0/0/0]: /a&lt;b&gt;</summary>") {
+		t.Errorf("summary not escaped:\n%s", got)
+	}
+	// empty sections have no heading
+	if strings.Count(got, "## ") != 1 || !strings.Contains(got, "## 🎉 No Changes\n\n<details>") {
+		t.Errorf("expected exactly the No Changes heading:\n%s", got)
+	}
+}
+
+func TestMarkdownWithoutRawLinesHasNoPreamble(t *testing.T) {
+	var out bytes.Buffer
+	if err := run(strings.NewReader(line("/m", "x")), &out, "", &markdownFormatter{}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Terragrunt output") {
+		t.Errorf("unexpected preamble:\n%s", out.String())
+	}
+}
+
+func TestCodeFence(t *testing.T) {
+	for body, want := range map[string]string{
+		"":               "```",
+		"a `b` c":        "```",
+		"```":            "````",
+		"x ```` y ``` z": "`````",
+	} {
+		if got := codeFence(body); got != want {
+			t.Errorf("codeFence(%q) = %q, want %q", body, got, want)
+		}
 	}
 }

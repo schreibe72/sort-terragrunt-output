@@ -1,4 +1,5 @@
 Terragrunt preamble
+Error: Invalid value for <input> ``` foo
 12:00:00.000 STDOUT [/w/env/prod/db] tofu: OpenTofu will perform the following actions:
 12:00:00.001 STDOUT [/w/env/prod/db] tofu:   # aws_db_instance.main will be destroyed
 12:00:00.002 STDOUT [/w/env/prod/db] tofu: Plan: 0 to add, 1 to change, 1 to destroy.

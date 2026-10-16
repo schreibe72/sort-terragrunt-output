@@ -13,8 +13,8 @@ module and sorts the modules into categories:
 
 Every module is printed as a collapsible group with its plan summary
 `Module[add/change/destroy]: <path>`. Modules are sorted alphabetically within
-a section. Lines that do not belong to a module are passed through unchanged
-before the report.
+a section. Lines that do not belong to a module (init output, errors, the unit
+tree, ...) are printed before the report, see the formats below.
 
 ## Installation
 
@@ -82,6 +82,13 @@ code is 1.
 | `gitlab` | GitLab CI: collapsed `section_start` / `section_end` |
 | `markdown` | Headings and `<details>` blocks, e.g. for PR comments or job summaries |
 | `plain` | Plain text without control sequences, e.g. for local use |
+
+`github`, `azure` and `gitlab` print lines outside of modules unchanged. In
+`markdown` they are collected in a collapsible block "Terragrunt output" at the
+top, so errors and tree drawings cannot break the formatting. All log text is
+put into code fences that are always longer than any backticks inside the text,
+module titles are HTML-escaped and sections without modules are omitted.
+`plain` removes color codes from those lines as well.
 
 Examples in a GitHub Actions job:
 

@@ -92,10 +92,11 @@ func openInput(name string) (io.Reader, func(), error) {
 	return f, func() { f.Close() }, nil
 }
 
-// run reads terragrunt output from in, prints lines that do not belong to a
-// module as-is and writes the grouped report to out.
+// run reads terragrunt output from in and writes the grouped report to out.
+// Lines that do not belong to a module are handed to the formatter first.
 func run(in io.Reader, out io.Writer, pathPrefix string, f formatter) error {
 	modules := map[string]*module{}
+	var raw []string
 
 	scanner := bufio.NewScanner(in)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
@@ -103,7 +104,7 @@ func run(in io.Reader, out io.Writer, pathPrefix string, f formatter) error {
 		line := scanner.Text()
 		x := lregex.FindStringSubmatch(line)
 		if len(x) != 3 {
-			fmt.Fprintln(out, line)
+			raw = append(raw, line)
 			continue
 		}
 		key, value := x[1], x[2]
@@ -142,6 +143,7 @@ func run(in io.Reader, out io.Writer, pathPrefix string, f formatter) error {
 	}
 	sort.Strings(keys)
 
+	f.preamble(out, raw)
 	for _, s := range sections {
 		f.section(out, s.title)
 		for _, k := range keys {
