@@ -1,0 +1,68 @@
+<details>
+<summary>Terragrunt output</summary>
+
+````
+Terragrunt preamble
+Error: Invalid value for <input> ``` foo
+````
+
+</details>
+
+## ⚠️ Changes with destroy
+
+<details>
+<summary>Module[0/1/1]: env/prod/db</summary>
+
+```
+OpenTofu will perform the following actions:
+  # aws_db_instance.main will be destroyed
+Plan: 0 to add, 1 to change, 1 to destroy.
+```
+
+</details>
+
+## 🚀 Changes
+
+<details>
+<summary>Module[2/0/0]: env/prod/app</summary>
+
+```
+OpenTofu will perform the following actions:
+Plan: 2 to add, 0 to change, 0 to destroy.
+```
+
+</details>
+
+## 🕒 Deprecations
+
+<details>
+<summary>Module[0/0/0]: env/dev/net</summary>
+
+```
+Warning: Argument is deprecated
+No changes.
+```
+
+</details>
+
+## 🎉 No Changes
+
+<details>
+<summary>Module[0/0/0]: env/dev/net</summary>
+
+```
+Warning: Argument is deprecated
+No changes.
+```
+
+</details>
+
+<details>
+<summary>Module[0/0/0]: env/prod/net</summary>
+
+```
+No changes. Your infrastructure matches the configuration.
+```
+
+</details>
+

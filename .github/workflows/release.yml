@@ -1,0 +1,122 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main, 'rc/**']
+  pull_request:
+  workflow_dispatch:
+
+# Version numbers are global, so all runs that publish share a group: one for
+# final releases, one for release candidates. Pull requests only run the tests.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.ref) || (github.ref == 'refs/heads/main' && 'release-final' || 'release-rc') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BINARY: sort-terragrunt-output
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false # no dependencies, so there is no go.sum to key the cache on
+      - run: go vet ./...
+      - run: go test ./...
+
+  version:
+    # releases are only published from main and rc/** (also for manual runs)
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/rc/'))
+    needs: test
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      release: ${{ steps.next.outputs.release }}
+      prerelease: ${{ steps.next.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # full history and tags are needed to compute the version
+      - id: next
+        shell: bash # enables pipefail, so a failing script fails the step despite tee
+        env:
+          # main publishes final releases, rc/** branches publish release candidates
+          MODE: ${{ github.ref == 'refs/heads/main' && 'release' || 'rc' }}
+        run: .github/scripts/next-version.sh "$MODE" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    if: needs.version.outputs.release == 'true'
+    needs: version
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: false # no dependencies, so there is no go.sum to key the cache on
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/${BINARY}_linux_${GOARCH}" .
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux-${{ matrix.goarch }}
+          path: dist/${{ env.BINARY }}_linux_*
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # create tag and release
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: linux-*
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: |
+          # v1.0.0 published a single binary without suffix; keep that name
+          # (a copy of the amd64 build) for backwards compatibility
+          cp "${BINARY}_linux_amd64" "${BINARY}"
+          sha256sum "${BINARY}" ${BINARY}_linux_* > checksums.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          # A release becomes public only after all assets are uploaded, so a
+          # failed upload leaves an unpublished draft, never a half-finished
+          # release. A draft left over from a failed run is replaced.
+          for id in $(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq '.[] | select(.draft and .tag_name == env.VERSION) | .id'); do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
+
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes \
+            --draft \
+            "${flags[@]}"
+          gh release edit "$VERSION" --repo "$GITHUB_REPOSITORY" --draft=false
