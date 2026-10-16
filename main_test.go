@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 var update = flag.Bool("update", false, "update golden files")
@@ -20,7 +21,7 @@ func line(module, msg string) string {
 func runString(t *testing.T, input, prefix string) string {
 	t.Helper()
 	var out bytes.Buffer
-	if err := run(strings.NewReader(input), &out, prefix, githubFormatter{}); err != nil {
+	if err := run(strings.NewReader(input), &out, options{pathPrefix: prefix}, githubFormatter{}); err != nil {
 		t.Fatalf("run: %v", err)
 	}
 	return out.String()
@@ -100,6 +101,24 @@ func TestCategorization(t *testing.T) {
 				line("/m", "\x1b[1mPlan:\x1b[0m 1 to add, 0 to change, 2 to destroy."),
 			},
 			want: "Module[1/0/2]: /m",
+			in:   []string{destroy},
+		},
+		{
+			name: "plan with import",
+			lines: []string{
+				line("/m", "will perform the following actions:"),
+				line("/m", "Plan: 1 to import, 0 to add, 0 to change, 3 to destroy."),
+			},
+			want: "Module[0/0/3]: /m",
+			in:   []string{destroy},
+		},
+		{
+			name: "plan counts in different order",
+			lines: []string{
+				line("/m", "will perform the following actions:"),
+				line("/m", "Plan: 2 to add, 1 to import, 5 to change, 1 to destroy."),
+			},
+			want: "Module[2/5/1]: /m",
 			in:   []string{destroy},
 		},
 		{
@@ -209,7 +228,7 @@ func TestLongLine(t *testing.T) {
 
 func TestTooLongLineReturnsError(t *testing.T) {
 	var out bytes.Buffer
-	err := run(strings.NewReader(strings.Repeat("x", maxLineSize+1)), &out, "", githubFormatter{})
+	err := run(strings.NewReader(strings.Repeat("x", maxLineSize+1)), &out, options{pathPrefix: ""}, githubFormatter{})
 	if err == nil {
 		t.Fatal("expected error for oversized line")
 	}
@@ -221,7 +240,7 @@ func (failingReader) Read([]byte) (int, error) { return 0, errors.New("boom") }
 
 func TestReadErrorIsReturned(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(failingReader{}, &out, "", githubFormatter{}); err == nil || !strings.Contains(err.Error(), "boom") {
+	if err := run(failingReader{}, &out, options{pathPrefix: ""}, githubFormatter{}); err == nil || !strings.Contains(err.Error(), "boom") {
 		t.Fatalf("expected read error, got %v", err)
 	}
 }
@@ -249,7 +268,7 @@ func testFormatters() map[string]formatter {
 		"github":   githubFormatter{},
 		"azure":    azureFormatter{},
 		"gitlab":   &gitlabFormatter{now: func() int64 { return 1700000000 }},
-		"markdown": &markdownFormatter{},
+		"markdown": markdownFormatter{},
 		"plain":    plainFormatter{},
 	}
 }
@@ -262,7 +281,7 @@ func TestGolden(t *testing.T) {
 	for name, f := range testFormatters() {
 		t.Run(name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := run(bytes.NewReader(in), &out, "/w/", f); err != nil {
+			if err := run(bytes.NewReader(in), &out, options{pathPrefix: "/w/"}, f); err != nil {
 				t.Fatal(err)
 			}
 			golden := "testdata/" + name + ".golden"
@@ -301,7 +320,7 @@ func TestFormatsStripOrKeepColors(t *testing.T) {
 	in := line("/m", "\x1b[31mred\x1b[0m")
 	for name, f := range testFormatters() {
 		var out bytes.Buffer
-		if err := run(strings.NewReader(in), &out, "", f); err != nil {
+		if err := run(strings.NewReader(in), &out, options{pathPrefix: ""}, f); err != nil {
 			t.Fatal(err)
 		}
 		hasColor := strings.Contains(out.String(), "\x1b[31m")
@@ -315,7 +334,7 @@ func TestFormatsStripOrKeepColors(t *testing.T) {
 func TestGitlabSectionsAreBalancedAndUnique(t *testing.T) {
 	in := strings.Join([]string{line("/a", "x"), line("/b", "y")}, "\n")
 	var out bytes.Buffer
-	if err := run(strings.NewReader(in), &out, "", testFormatters()["gitlab"]); err != nil {
+	if err := run(strings.NewReader(in), &out, options{pathPrefix: ""}, testFormatters()["gitlab"]); err != nil {
 		t.Fatal(err)
 	}
 	for _, n := range []string{"module_1", "module_2"} {
@@ -361,7 +380,7 @@ func TestMarkdown(t *testing.T) {
 		line("/a<b>", "plan with ```` four ticks"),
 	}, "\n")
 	var out bytes.Buffer
-	if err := run(strings.NewReader(in), &out, "", &markdownFormatter{}); err != nil {
+	if err := run(strings.NewReader(in), &out, options{pathPrefix: ""}, markdownFormatter{}); err != nil {
 		t.Fatal(err)
 	}
 	got := out.String()
@@ -379,15 +398,15 @@ func TestMarkdown(t *testing.T) {
 	if !strings.Contains(got, "<summary>Module[0/0/0]: /a&lt;b&gt;</summary>") {
 		t.Errorf("summary not escaped:\n%s", got)
 	}
-	// empty sections have no heading
-	if strings.Count(got, "## ") != 1 || !strings.Contains(got, "## 🎉 No Changes\n\n<details>") {
-		t.Errorf("expected exactly the No Changes heading:\n%s", got)
+	// empty sections keep their heading by default, like in the other formats
+	if strings.Count(got, "## ") != 4 {
+		t.Errorf("expected all four headings:\n%s", got)
 	}
 }
 
 func TestMarkdownWithoutRawLinesHasNoPreamble(t *testing.T) {
 	var out bytes.Buffer
-	if err := run(strings.NewReader(line("/m", "x")), &out, "", &markdownFormatter{}); err != nil {
+	if err := run(strings.NewReader(line("/m", "x")), &out, options{pathPrefix: ""}, markdownFormatter{}); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Terragrunt output") {
@@ -405,5 +424,217 @@ func TestCodeFence(t *testing.T) {
 		if got := codeFence(body); got != want {
 			t.Errorf("codeFence(%q) = %q, want %q", body, got, want)
 		}
+	}
+}
+
+func TestHideFlags(t *testing.T) {
+	const (
+		destroy = "⚠️ Changes with destroy"
+		changes = "🚀 Changes"
+		deprec  = "🕒 Deprecations"
+		none    = "🎉 No Changes"
+	)
+	all := []string{destroy, changes, deprec, none}
+
+	noChange := line("/nochange", "No changes.")
+	deprecated := strings.Join([]string{
+		line("/deprecated", "will perform the following actions:"),
+		line("/deprecated", "Warning: Argument is deprecated"),
+		line("/deprecated", "Plan: 1 to add, 0 to change, 0 to destroy."),
+	}, "\n")
+
+	tests := []struct {
+		name  string
+		input string
+		opts  options
+		want  []string // headings that must appear
+		mods  []string // modules that must appear
+		gone  []string // modules that must not appear
+	}{
+		{"default shows empty sections", noChange, options{}, all, []string{"/nochange"}, nil},
+		{"hide-empty", noChange, options{hideEmpty: true}, []string{none}, []string{"/nochange"}, nil},
+		{"hide-nochanges", noChange, options{hideNoChanges: true}, []string{destroy, changes, deprec}, nil, []string{"/nochange"}},
+		{"both", noChange, options{hideEmpty: true, hideNoChanges: true}, nil, nil, []string{"/nochange"}},
+		{"hide-nochanges keeps deprecations", deprecated, options{hideEmpty: true, hideNoChanges: true}, []string{changes, deprec}, []string{"/deprecated"}, nil},
+	}
+
+	for _, tt := range tests {
+		for name, f := range testFormatters() {
+			t.Run(tt.name+"/"+name, func(t *testing.T) {
+				var out bytes.Buffer
+				if err := run(strings.NewReader(tt.input), &out, tt.opts, f); err != nil {
+					t.Fatal(err)
+				}
+				got := out.String()
+				for _, h := range all {
+					want := false
+					for _, w := range tt.want {
+						want = want || w == h
+					}
+					if has := strings.Contains(got, h); has != want {
+						t.Errorf("heading %q present = %v, want %v\n%s", h, has, want, got)
+					}
+				}
+				for _, m := range tt.mods {
+					if !strings.Contains(got, m) {
+						t.Errorf("module %s missing\n%s", m, got)
+					}
+				}
+				for _, m := range tt.gone {
+					if strings.Contains(got, m) {
+						t.Errorf("module %s must be hidden\n%s", m, got)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestCICommandsInLogAreNeutralized(t *testing.T) {
+	in := strings.Join([]string{
+		"::add-mask::raw-secret",
+		"  ##vso[task.setvariable variable=x]raw",
+		"\f::add-mask::formfeed",
+		"\v##vso[task.complete result=Succeeded]",
+		"\u00a0::add-mask::nbsp",
+		"\x1b[0m::add-mask::ansi",
+		"carriage\r::add-mask::return",
+		line("/m", "::stop-commands::token"),
+		line("/m", "  ::endgroup::"),
+		line("/m", "\f##[endgroup]"),
+		line("/m", "##vso[task.complete result=Succeeded]"),
+		line("/m", "\x1b[1m::set-output name=x::y"),
+		line("/m", "carriage\r::endgroup::"),
+		line("/m", "x section_end:1:module_1\r\x1b[0K"),
+		line("/m", "x section_start:1:module_1\r\x1b[0K"),
+		line("/m", "harmless :: text, # not a command"),
+		// the module path itself is log text, too
+		line("/p\r::add-mask::path", "No changes."),
+		line("/q\u00a0##vso[task.complete]", "No changes."),
+	}, "\n")
+
+	tests := []struct {
+		format  string
+		bad     func(line string) bool // would be interpreted by the CI system
+		markers []string               // must occur exactly once per group
+		atStart bool                   // markers only count at the start of a line
+	}{
+		{"github", func(l string) bool {
+			return strings.HasPrefix(l, "::") && l != "::endgroup::" && !strings.HasPrefix(l, "::group:: ")
+		}, []string{"::group::", "::endgroup::"}, true},
+		{"azure", func(l string) bool {
+			return strings.HasPrefix(l, "##") && l != "##[endgroup]" && !strings.HasPrefix(l, "##[group]")
+		}, []string{"##[group]", "##[endgroup]"}, true},
+		{"gitlab", func(string) bool { return false }, []string{"section_start:", "section_end:"}, false},
+	}
+	const groups = 3 // /m, /p..., /q...
+	for _, tt := range tests {
+		t.Run(tt.format, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := run(strings.NewReader(in), &out, options{}, testFormatters()[tt.format]); err != nil {
+				t.Fatal(err)
+			}
+			got := out.String()
+
+			// Look at the output the way a runner does: a lone \r ends a line, whitespace
+			// and color codes in front of a command are ignored.
+			var lines []string
+			for _, l := range strings.FieldsFunc(got, func(r rune) bool { return r == '\n' || r == '\r' }) {
+				l = strings.TrimLeftFunc(stripANSI(l), unicode.IsSpace)
+				lines = append(lines, l)
+				if tt.bad(l) {
+					t.Errorf("line would be interpreted as command: %q", l)
+				}
+			}
+			for _, m := range tt.markers {
+				n := strings.Count(got, m)
+				if tt.atStart {
+					n = 0
+					for _, l := range lines {
+						if strings.HasPrefix(l, m) {
+							n++
+						}
+					}
+				}
+				if n != groups {
+					t.Errorf("%d occurrences of %q, want %d (injected marker not neutralized)\n%q", n, m, groups, got)
+				}
+			}
+			if !strings.Contains(got, "harmless :: text, # not a command") {
+				t.Errorf("harmless line was changed:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestEscapeFunctions(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func(string) string
+		in   string
+		want string
+	}{
+		{"github command", escapeGithub, "::warning::x", ": :warning::x"},
+		{"github indented", escapeGithub, "  ::warning::x", "  : :warning::x"},
+		{"github inside line", escapeGithub, "a ::warning::x", "a ::warning::x"},
+		{"github form feed", escapeGithub, "\f::warning::x", "\f: :warning::x"},
+		{"github nbsp", escapeGithub, "\u00a0::warning::x", "\u00a0: :warning::x"},
+		{"github ansi", escapeGithub, "\x1b[0m::warning::x", "\x1b[0m: :warning::x"},
+		{"github ansi and space", escapeGithub, "\x1b[1m \x1b[0m::x", "\x1b[1m \x1b[0m: :x"},
+		{"github carriage return", escapeGithub, "a\r::b", "a ::b"},
+		{"github leading carriage return", escapeGithub, "\r::b", " : :b"},
+		{"github only whitespace", escapeGithub, "  ", "  "},
+		{"github invalid utf8", escapeGithub, "\xff::b", "\xff::b"},
+		{"azure vertical tab", escapeAzure, "\v##vso[x]", "\v# #vso[x]"},
+		{"gitlab carriage return", escapeGitlab, "a\rsection_end:1:x", "a section_ end:1:x"},
+		{"azure command", escapeAzure, "##vso[x]", "# #vso[x]"},
+		{"azure other", escapeAzure, "# heading", "# heading"},
+		{"gitlab start", escapeGitlab, "section_start:1:a", "section_ start:1:a"},
+		{"gitlab none", escapeGitlab, "nothing here", "nothing here"},
+	}
+	for _, tt := range tests {
+		if got := tt.fn(tt.in); got != tt.want {
+			t.Errorf("%s: %q -> %q, want %q", tt.name, tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestHideNoChangesKeepsDeprecatedModuleOnce(t *testing.T) {
+	in := line("/dep", "Warning: Argument is deprecated")
+
+	var out bytes.Buffer
+	if err := run(strings.NewReader(in), &out, options{hideNoChanges: true}, githubFormatter{}); err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(out.String(), "Module[0/0/0]: /dep"); n != 1 {
+		t.Errorf("module listed %d times, want 1 (only under Deprecations):\n%s", n, out.String())
+	}
+	if !strings.Contains(sectionOf(t, out.String(), "🕒 Deprecations"), "/dep") {
+		t.Errorf("module missing under Deprecations:\n%s", out.String())
+	}
+}
+
+func TestNothingToPrint(t *testing.T) {
+	for name, f := range testFormatters() {
+		t.Run(name, func(t *testing.T) {
+			// empty input: no headings, no footer
+			var out bytes.Buffer
+			if err := run(strings.NewReader(""), &out, options{hideEmpty: true}, f); err != nil {
+				t.Fatal(err)
+			}
+			if out.Len() != 0 {
+				t.Errorf("empty input printed %q", out.String())
+			}
+
+			// only lines outside of modules: just those lines, no separator
+			out.Reset()
+			if err := run(strings.NewReader("raw line\n"), &out, options{hideEmpty: true}, f); err != nil {
+				t.Fatal(err)
+			}
+			got := out.String()
+			if !strings.Contains(got, "raw line") || strings.Contains(got, "====") || strings.Contains(got, "## ") {
+				t.Errorf("unexpected output for raw lines only: %q", got)
+			}
+		})
 	}
 }

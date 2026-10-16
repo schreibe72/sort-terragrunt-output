@@ -18,8 +18,10 @@ var version = "dev"
 const maxLineSize = 16 * 1024 * 1024
 
 var (
-	lregex    = regexp.MustCompile(`STDOUT\s\[(.*?)\]\s(?:tofu|terraform):\s(.*)$`)
-	pregex    = regexp.MustCompile(`Plan:\s*(\d+)\s*to add,\s*(\d+)\s*to change,\s*(\d+)\s*to destroy.`)
+	lregex = regexp.MustCompile(`STDOUT\s\[(.*?)\]\s(?:tofu|terraform):\s(.*)$`)
+	// Counts are parsed one by one, so additional ones ("1 to import") or a
+	// different order do not matter.
+	planCount = regexp.MustCompile(`(\d+)\s+to\s+(add|change|destroy|import)\b`)
 	ansiregex = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
 )
 
@@ -33,25 +35,34 @@ type module struct {
 }
 
 type section struct {
-	title  string
-	member func(m *module) bool
+	title     string
+	member    func(m *module) bool
+	noChanges bool // hidden by -hide-nochanges
+}
+
+type options struct {
+	pathPrefix    string
+	hideEmpty     bool // omit sections without modules
+	hideNoChanges bool // omit the "No Changes" section
 }
 
 var sections = []section{
-	{"⚠️ Changes with destroy", func(m *module) bool { return m.hasChanges && m.destroy > 0 }},
-	{"🚀 Changes", func(m *module) bool { return m.hasChanges && m.destroy == 0 }},
-	{"🕒 Deprecations", func(m *module) bool { return m.deprecated }},
-	{"🎉 No Changes", func(m *module) bool { return !m.hasChanges }},
+	{"⚠️ Changes with destroy", func(m *module) bool { return m.hasChanges && m.destroy > 0 }, false},
+	{"🚀 Changes", func(m *module) bool { return m.hasChanges && m.destroy == 0 }, false},
+	{"🕒 Deprecations", func(m *module) bool { return m.deprecated }, false},
+	{"🎉 No Changes", func(m *module) bool { return !m.hasChanges }, true},
 }
 
 func main() {
 	var inputFile string
-	var pathPrefix string
+	var opts options
 	var format string
 	var showVersion bool
 
 	flag.StringVar(&inputFile, "f", "", "Input file (default: stdin)")
-	flag.StringVar(&pathPrefix, "p", "", "Prefix to remove")
+	flag.StringVar(&opts.pathPrefix, "p", "", "Prefix to remove")
+	flag.BoolVar(&opts.hideEmpty, "hide-empty", false, "Omit sections without modules")
+	flag.BoolVar(&opts.hideNoChanges, "hide-nochanges", false, "Omit the \"No Changes\" section")
 	flag.StringVar(&format, "format", "github", "Output format: "+formatList())
 	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.Parse()
@@ -74,7 +85,7 @@ func main() {
 	}
 	defer closeIn()
 
-	if err := run(in, os.Stdout, pathPrefix, f); err != nil {
+	if err := run(in, os.Stdout, opts, f); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -94,7 +105,7 @@ func openInput(name string) (io.Reader, func(), error) {
 
 // run reads terragrunt output from in and writes the grouped report to out.
 // Lines that do not belong to a module are handed to the formatter first.
-func run(in io.Reader, out io.Writer, pathPrefix string, f formatter) error {
+func run(in io.Reader, out io.Writer, opts options, f formatter) error {
 	modules := map[string]*module{}
 	var raw []string
 
@@ -116,11 +127,17 @@ func run(in io.Reader, out io.Writer, pathPrefix string, f formatter) error {
 
 		// Detect on the plain text, but keep the original (colored) text in the log.
 		plain := ansiregex.ReplaceAllString(value, "")
-		if strings.Contains(plain, "Plan:") {
-			if p := pregex.FindStringSubmatch(plain); p != nil {
-				m.add, _ = strconv.Atoi(p[1])
-				m.change, _ = strconv.Atoi(p[2])
-				m.destroy, _ = strconv.Atoi(p[3])
+		if i := strings.Index(plain, "Plan:"); i >= 0 {
+			for _, c := range planCount.FindAllStringSubmatch(plain[i:], -1) {
+				n, _ := strconv.Atoi(c[1])
+				switch c[2] {
+				case "add":
+					m.add = n
+				case "change":
+					m.change = n
+				case "destroy":
+					m.destroy = n
+				}
 			}
 		}
 		if strings.Contains(plain, "will perform the following actions") {
@@ -144,17 +161,30 @@ func run(in io.Reader, out io.Writer, pathPrefix string, f formatter) error {
 	sort.Strings(keys)
 
 	f.preamble(out, raw)
+	printed := false
 	for _, s := range sections {
-		f.section(out, s.title)
+		if opts.hideNoChanges && s.noChanges {
+			continue
+		}
+		var members []string
 		for _, k := range keys {
-			m := modules[k]
-			if !s.member(m) {
-				continue
+			if s.member(modules[k]) {
+				members = append(members, k)
 			}
-			title := fmt.Sprintf("Module[%d/%d/%d]: %s", m.add, m.change, m.destroy, strings.TrimPrefix(k, pathPrefix))
+		}
+		if opts.hideEmpty && len(members) == 0 {
+			continue
+		}
+		printed = true
+		f.section(out, s.title)
+		for _, k := range members {
+			m := modules[k]
+			title := fmt.Sprintf("Module[%d/%d/%d]: %s", m.add, m.change, m.destroy, strings.TrimPrefix(k, opts.pathPrefix))
 			f.group(out, title, m.log.String())
 		}
 	}
-	f.footer(out)
+	if printed {
+		f.footer(out)
+	}
 	return nil
 }

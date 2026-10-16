@@ -68,10 +68,18 @@ terragrunt run-all plan 2>&1 | sort-terragrunt-output -p "$PWD/"
 | `-f` | stdin | Input file |
 | `-p` | | Prefix removed from the module paths |
 | `-format` | `github` | Output format, see below |
+| `-hide-empty` | off | Omit sections without modules |
+| `-hide-nochanges` | off | Omit the "No Changes" section |
 | `-version` | | Print the version and exit |
 
 Errors (unreadable input, unknown format) are printed to stderr and the exit
 code is 1.
+
+By default all four sections are printed, also when they are empty. The two
+`-hide-*` flags work with every output format and can be combined: with both
+set, only sections that contain modules are printed, and modules without
+changes are left out (modules with deprecations are still listed under
+"Deprecations").
 
 ### Output formats
 
@@ -81,14 +89,23 @@ code is 1.
 | `azure` | Azure DevOps: `##[group]` / `##[endgroup]` |
 | `gitlab` | GitLab CI: collapsed `section_start` / `section_end` |
 | `markdown` | Headings and `<details>` blocks, e.g. for PR comments or job summaries |
-| `plain` | Plain text without control sequences, e.g. for local use |
+| `plain` | Plain text without color codes, e.g. for local use |
 
 `github`, `azure` and `gitlab` print lines outside of modules unchanged. In
 `markdown` they are collected in a collapsible block "Terragrunt output" at the
 top, so errors and tree drawings cannot break the formatting. All log text is
 put into code fences that are always longer than any backticks inside the text,
-module titles are HTML-escaped and sections without modules are omitted.
-`plain` removes color codes from those lines as well.
+and module titles are HTML-escaped.
+`plain` removes color codes from those lines as well (only ANSI color/style
+sequences are recognized).
+
+In `github`, `azure` and `gitlab` the log text is sanitized so that it is not
+interpreted as a command of the CI system: carriage returns are replaced by
+spaces, and a line that starts with `::` (GitHub) or `##` (Azure), after
+optional whitespace or color codes, or that contains a GitLab `section_start:` /
+`section_end:` marker gets a space inserted, e.g. `::add-mask::x` is printed as
+`: :add-mask::x`. This also applies to module titles. All other text is printed
+unchanged.
 
 Examples in a GitHub Actions job:
 
@@ -117,9 +134,10 @@ git diff testdata
 
 ## Releases
 
-Every push to `main` or to a branch named `rc/**` runs
-`.github/workflows/release.yml`: tests, then the Linux binaries for `amd64` and
-`arm64` are built and published as a GitHub release with checksums.
+Every push to `main` or to a branch named `rc/**` (and a manual run on one of
+these branches) runs `.github/workflows/release.yml`: tests, then the Linux
+binaries for `amd64` and `arm64` are built and published as a GitHub release
+with checksums. Pull requests only run the tests.
 
 - `main` publishes a final release `vX.Y.Z`.
 - `rc/**` publishes a pre-release `vX.Y.Z-rc.N` (N counts up for every push),

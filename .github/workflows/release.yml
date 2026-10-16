@@ -29,7 +29,8 @@ jobs:
       - run: go test ./...
 
   version:
-    if: github.event_name != 'pull_request'
+    # releases are only published from main and rc/** (also for manual runs)
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/rc/'))
     needs: test
     runs-on: ubuntu-24.04
     outputs:
@@ -41,6 +42,7 @@ jobs:
         with:
           fetch-depth: 0 # full history and tags are needed to compute the version
       - id: next
+        shell: bash # enables pipefail, so a failing script fails the step despite tee
         env:
           # main publishes final releases, rc/** branches publish release candidates
           MODE: ${{ github.ref == 'refs/heads/main' && 'release' || 'rc' }}

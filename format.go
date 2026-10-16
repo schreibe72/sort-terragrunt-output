@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // formatter renders the report for a specific CI system or output medium.
@@ -25,7 +28,7 @@ var formatNames = map[string]func() formatter{
 	"github":   func() formatter { return githubFormatter{} },
 	"azure":    func() formatter { return azureFormatter{} },
 	"gitlab":   func() formatter { return &gitlabFormatter{now: func() int64 { return time.Now().Unix() }} },
-	"markdown": func() formatter { return &markdownFormatter{} },
+	"markdown": func() formatter { return markdownFormatter{} },
 	"plain":    func() formatter { return plainFormatter{} },
 }
 
@@ -52,11 +55,71 @@ func writeSection(w io.Writer, title string) {
 	fmt.Fprintf(w, "%s\n%s\n\n", separator, title)
 }
 
-func writeLines(w io.Writer, lines []string) {
+func writeLines(w io.Writer, lines []string, escape func(string) string) {
 	for _, l := range lines {
-		fmt.Fprintln(w, l)
+		fmt.Fprintln(w, escape(l))
 	}
 }
+
+// mapLines applies f to every line of s.
+func mapLines(s string, f func(string) string) string {
+	lines := strings.Split(s, "\n")
+	for i := range lines {
+		lines[i] = f(lines[i])
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Text from the log must not be able to act as a command of the CI system, e.g.
+// ::add-mask::, ::stop-commands:: or a fake ::endgroup::. Carriage returns are
+// replaced by spaces (a lone \r can end a line for the runner), and a line that
+// would be interpreted gets a space inserted into the marker. Whitespace and
+// color codes in front of a marker are skipped like the CI system does, all
+// other text is untouched. The same functions are applied to module titles.
+
+var leadingANSI = regexp.MustCompile(`^\x1b\[[0-9;]*[A-Za-z]`)
+
+// commandStart returns the index of the first byte that is neither whitespace
+// (including Unicode whitespace) nor an ANSI color sequence.
+func commandStart(line string) int {
+	i := 0
+	for i < len(line) {
+		rest := line[i:]
+		if loc := leadingANSI.FindStringIndex(rest); loc != nil {
+			i += loc[1]
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(rest)
+		if !unicode.IsSpace(r) {
+			break
+		}
+		i += size
+	}
+	return i
+}
+
+func noCR(line string) string { return strings.ReplaceAll(line, "\r", " ") }
+
+// escapePrefix replaces marker by replacement if the line starts with it.
+func escapePrefix(line, marker, replacement string) string {
+	line = noCR(line)
+	i := commandStart(line)
+	if !strings.HasPrefix(line[i:], marker) {
+		return line
+	}
+	return line[:i] + replacement + line[i+len(marker):]
+}
+
+// escapeGithub handles workflow commands, which start with "::".
+func escapeGithub(line string) string { return escapePrefix(line, "::", ": :") }
+
+// escapeAzure handles logging commands, which start with "##" ("##vso[", "##[").
+func escapeAzure(line string) string { return escapePrefix(line, "##", "# #") }
+
+// escapeGitlab handles collapsible section markers.
+var gitlabMarkers = strings.NewReplacer("section_start:", "section_ start:", "section_end:", "section_ end:")
+
+func escapeGitlab(line string) string { return gitlabMarkers.Replace(noCR(line)) }
 
 func writeFooter(w io.Writer) {
 	fmt.Fprintf(w, "\n%s\n", separator)
@@ -65,24 +128,24 @@ func writeFooter(w io.Writer) {
 // github: workflow commands ::group:: / ::endgroup::
 type githubFormatter struct{}
 
-func (githubFormatter) preamble(w io.Writer, lines []string) { writeLines(w, lines) }
+func (githubFormatter) preamble(w io.Writer, lines []string) { writeLines(w, lines, escapeGithub) }
 func (githubFormatter) section(w io.Writer, title string)    { writeSection(w, title) }
 func (githubFormatter) footer(w io.Writer)                   { writeFooter(w) }
 func (githubFormatter) group(w io.Writer, title, body string) {
-	fmt.Fprintf(w, "::group:: %s\n\n\n", title)
-	fmt.Fprintln(w, body)
+	fmt.Fprintf(w, "::group:: %s\n\n\n", escapeGithub(title))
+	fmt.Fprintln(w, mapLines(body, escapeGithub))
 	fmt.Fprintf(w, "\n\n\n::endgroup::\n")
 }
 
 // azure: logging commands ##[group] / ##[endgroup]
 type azureFormatter struct{}
 
-func (azureFormatter) preamble(w io.Writer, lines []string) { writeLines(w, lines) }
+func (azureFormatter) preamble(w io.Writer, lines []string) { writeLines(w, lines, escapeAzure) }
 func (azureFormatter) section(w io.Writer, title string)    { writeSection(w, title) }
 func (azureFormatter) footer(w io.Writer)                   { writeFooter(w) }
 func (azureFormatter) group(w io.Writer, title, body string) {
-	fmt.Fprintf(w, "##[group]%s\n", title)
-	fmt.Fprint(w, body)
+	fmt.Fprintf(w, "##[group]%s\n", escapeAzure(title))
+	fmt.Fprint(w, mapLines(body, escapeAzure))
 	fmt.Fprintf(w, "##[endgroup]\n")
 }
 
@@ -92,25 +155,23 @@ type gitlabFormatter struct {
 	n   int
 }
 
-func (*gitlabFormatter) preamble(w io.Writer, lines []string) { writeLines(w, lines) }
+func (*gitlabFormatter) preamble(w io.Writer, lines []string) { writeLines(w, lines, escapeGitlab) }
 func (*gitlabFormatter) section(w io.Writer, title string)    { writeSection(w, title) }
 func (*gitlabFormatter) footer(w io.Writer)                   { writeFooter(w) }
 func (f *gitlabFormatter) group(w io.Writer, title, body string) {
 	f.n++
 	name := fmt.Sprintf("module_%d", f.n)
-	fmt.Fprintf(w, "section_start:%d:%s[collapsed=true]\r\x1b[0K%s\n", f.now(), name, title)
-	fmt.Fprint(w, body)
+	fmt.Fprintf(w, "section_start:%d:%s[collapsed=true]\r\x1b[0K%s\n", f.now(), name, escapeGitlab(title))
+	fmt.Fprint(w, mapLines(body, escapeGitlab))
 	fmt.Fprintf(w, "section_end:%d:%s\r\x1b[0K\n", f.now(), name)
 }
 
 // markdown: headings and collapsible <details> blocks, e.g. for PR comments
 // or job summaries. Color codes are removed, everything that comes from the
 // log is put into a code fence, titles are HTML-escaped.
-type markdownFormatter struct {
-	pending string // heading of the current section, written with its first module
-}
+type markdownFormatter struct{}
 
-func (f *markdownFormatter) preamble(w io.Writer, lines []string) {
+func (markdownFormatter) preamble(w io.Writer, lines []string) {
 	if len(lines) == 0 {
 		return
 	}
@@ -118,13 +179,9 @@ func (f *markdownFormatter) preamble(w io.Writer, lines []string) {
 	writeDetails(w, "Terragrunt output", body)
 }
 
-func (f *markdownFormatter) section(_ io.Writer, title string) { f.pending = title }
-func (f *markdownFormatter) footer(io.Writer)                  {}
-func (f *markdownFormatter) group(w io.Writer, title, body string) {
-	if f.pending != "" {
-		fmt.Fprintf(w, "## %s\n\n", f.pending)
-		f.pending = ""
-	}
+func (markdownFormatter) section(w io.Writer, title string) { fmt.Fprintf(w, "## %s\n\n", title) }
+func (markdownFormatter) footer(io.Writer)                  {}
+func (markdownFormatter) group(w io.Writer, title, body string) {
 	writeDetails(w, title, stripANSI(body))
 }
 
@@ -154,7 +211,7 @@ func codeFence(body string) string {
 	return strings.Repeat("`", n)
 }
 
-// plain: no control sequences at all, color codes are removed.
+// plain: no color codes and no CI commands, e.g. for local use.
 type plainFormatter struct{}
 
 func (plainFormatter) preamble(w io.Writer, lines []string) {
