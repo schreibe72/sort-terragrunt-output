@@ -18,25 +18,26 @@ env:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false # no dependencies, so there is no go.sum to key the cache on
       - run: go vet ./...
       - run: go test ./...
 
   version:
     if: github.event_name != 'pull_request'
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.next.outputs.version }}
       release: ${{ steps.next.outputs.release }}
       prerelease: ${{ steps.next.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # full history and tags are needed to compute the version
       - id: next
@@ -48,15 +49,16 @@ jobs:
   build:
     if: needs.version.outputs.release == 'true'
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+          cache: false # no dependencies, so there is no go.sum to key the cache on
       - name: Build
         env:
           CGO_ENABLED: "0"
@@ -68,7 +70,7 @@ jobs:
           mkdir -p "dist/$name"
           go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/$name/$BINARY" .
           tar -C dist -czf "dist/$name.tar.gz" "$name"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.goarch }}
           path: dist/*.tar.gz
@@ -76,11 +78,11 @@ jobs:
 
   release:
     needs: [version, build]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write # create tag and release
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           pattern: linux-*
