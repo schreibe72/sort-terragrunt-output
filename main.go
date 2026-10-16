@@ -4,112 +4,155 @@ import (
 	"bufio"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
 
+// version is set at build time: go build -ldflags "-X main.version=v1.2.3"
+var version = "dev"
+
+const maxLineSize = 16 * 1024 * 1024
+
+var (
+	lregex    = regexp.MustCompile(`STDOUT\s\[(.*?)\]\s(?:tofu|terraform):\s(.*)$`)
+	pregex    = regexp.MustCompile(`Plan:\s*(\d+)\s*to add,\s*(\d+)\s*to change,\s*(\d+)\s*to destroy.`)
+	ansiregex = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+)
+
+type module struct {
+	log        strings.Builder
+	hasChanges bool
+	deprecated bool
+	add        int
+	change     int
+	destroy    int
+}
+
+type section struct {
+	title  string
+	member func(m *module) bool
+}
+
+var sections = []section{
+	{"⚠️ Changes with destroy", func(m *module) bool { return m.hasChanges && m.destroy > 0 }},
+	{"🚀 Changes", func(m *module) bool { return m.hasChanges && m.destroy == 0 }},
+	{"🕒 Deprecations", func(m *module) bool { return m.deprecated }},
+	{"🎉 No Changes", func(m *module) bool { return !m.hasChanges }},
+}
+
 func main() {
 	var inputFile string
 	var pathPrefix string
-	var textMap struct {
-		changes         map[string]bool
-		deprecations    map[string]bool
-		log             map[string]string
-		resourceAdd     map[string]int
-		resourceChange  map[string]int
-		resourceDestroy map[string]int
-	}
+	var format string
+	var showVersion bool
 
-	textMap.log = map[string]string{}
-	textMap.changes = map[string]bool{}
-	textMap.deprecations = map[string]bool{}
-	textMap.resourceAdd = map[string]int{}
-	textMap.resourceChange = map[string]int{}
-	textMap.resourceDestroy = map[string]int{}
-
-	flag.StringVar(&inputFile, "f", "", "Input File")
+	flag.StringVar(&inputFile, "f", "", "Input file (default: stdin)")
 	flag.StringVar(&pathPrefix, "p", "", "Prefix to remove")
+	flag.StringVar(&format, "format", "github", "Output format: "+formatList())
+	flag.BoolVar(&showVersion, "version", false, "Print version and exit")
 	flag.Parse()
 
-	readFile, err := os.Open(inputFile)
-	if err != nil {
-		panic(err)
+	if showVersion {
+		fmt.Println(version)
+		return
 	}
-	fileScanner := bufio.NewScanner(readFile)
 
-	fileScanner.Split(bufio.ScanLines)
-	lregex, _ := regexp.Compile(`STDOUT\s\[(.*?)\]\stofu:\s(.*)$`)
-	pregex, _ := regexp.Compile(`Plan:\s*(\d+)\s*to add,\s*(\d+)\s*to change,\s*(\d+)\s*to destroy.`)
-	for fileScanner.Scan() {
-		line := fileScanner.Text()
+	f, err := newFormatter(format)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+
+	in, closeIn, err := openInput(inputFile)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	defer closeIn()
+
+	if err := run(in, os.Stdout, pathPrefix, f); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+// openInput opens the given file, or returns stdin if name is empty.
+func openInput(name string) (io.Reader, func(), error) {
+	if name == "" {
+		return os.Stdin, func() {}, nil
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		return nil, nil, err
+	}
+	return f, func() { f.Close() }, nil
+}
+
+// run reads terragrunt output from in, prints lines that do not belong to a
+// module as-is and writes the grouped report to out.
+func run(in io.Reader, out io.Writer, pathPrefix string, f formatter) error {
+	modules := map[string]*module{}
+
+	scanner := bufio.NewScanner(in)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineSize)
+	for scanner.Scan() {
+		line := scanner.Text()
 		x := lregex.FindStringSubmatch(line)
 		if len(x) != 3 {
-			fmt.Println(line)
+			fmt.Fprintln(out, line)
 			continue
 		}
-		key := x[1]
-		value := x[2]
-		if strings.Contains(value, "Plan:") {
-			m := pregex.FindStringSubmatch(value)
-			textMap.resourceAdd[key], _ = strconv.Atoi(m[1])
-			textMap.resourceChange[key], _ = strconv.Atoi(m[2])
-			textMap.resourceDestroy[key], _ = strconv.Atoi(m[3])
-		}
-		if strings.Contains(value, "will perform the following actions") {
-			textMap.changes[key] = true
-		}
-		if strings.Contains(value, "Warning: Argument is deprecated") {
-			textMap.deprecations[key] = true
+		key, value := x[1], x[2]
+		m := modules[key]
+		if m == nil {
+			m = &module{}
+			modules[key] = m
 		}
 
-		textMap.log[key] += fmt.Sprintf("%s\n", value)
+		// Detect on the plain text, but keep the original (colored) text in the log.
+		plain := ansiregex.ReplaceAllString(value, "")
+		if strings.Contains(plain, "Plan:") {
+			if p := pregex.FindStringSubmatch(plain); p != nil {
+				m.add, _ = strconv.Atoi(p[1])
+				m.change, _ = strconv.Atoi(p[2])
+				m.destroy, _ = strconv.Atoi(p[3])
+			}
+		}
+		if strings.Contains(plain, "will perform the following actions") {
+			m.hasChanges = true
+		}
+		if strings.Contains(plain, "Warning: Argument is deprecated") {
+			m.deprecated = true
+		}
+
+		m.log.WriteString(value)
+		m.log.WriteByte('\n')
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("reading input: %w", err)
 	}
 
-	readFile.Close()
+	keys := make([]string, 0, len(modules))
+	for k := range modules {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 
-	fmt.Printf("===============================\n⚠️ Changes with destroy\n\n")
-	for k, v := range textMap.log {
-		if _, ok := textMap.changes[k]; !ok {
-			continue
+	for _, s := range sections {
+		f.section(out, s.title)
+		for _, k := range keys {
+			m := modules[k]
+			if !s.member(m) {
+				continue
+			}
+			title := fmt.Sprintf("Module[%d/%d/%d]: %s", m.add, m.change, m.destroy, strings.TrimPrefix(k, pathPrefix))
+			f.group(out, title, m.log.String())
 		}
-		if textMap.resourceDestroy[k] == 0 {
-			continue
-		}
-		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
-		fmt.Println(v)
-		fmt.Printf("\n\n\n::endgroup::\n")
 	}
-	fmt.Printf("===============================\n🚀 Changes\n\n")
-	for k, v := range textMap.log {
-		if _, ok := textMap.changes[k]; !ok {
-			continue
-		}
-		if textMap.resourceDestroy[k] > 0 {
-			continue
-		}
-		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
-		fmt.Println(v)
-		fmt.Printf("\n\n\n::endgroup::\n")
-	}
-	fmt.Printf("===============================\n🕒 Deprecations\n\n")
-	for k, v := range textMap.log {
-		if _, ok := textMap.deprecations[k]; !ok {
-			continue
-		}
-		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
-		fmt.Println(v)
-		fmt.Printf("\n\n\n::endgroup::\n")
-	}
-	fmt.Printf("===============================\n🎉 No Changes\n\n")
-	for k, v := range textMap.log {
-		if _, ok := textMap.changes[k]; ok {
-			continue
-		}
-		fmt.Printf("::group:: Module[%d/%d/%d]: %s\n\n\n", textMap.resourceAdd[k], textMap.resourceChange[k], textMap.resourceDestroy[k], strings.TrimPrefix(k, pathPrefix))
-		fmt.Println(v)
-		fmt.Printf("\n\n\n::endgroup::\n")
-	}
-	fmt.Printf("\n===============================\n")
+	f.footer(out)
+	return nil
 }

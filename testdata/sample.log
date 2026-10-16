@@ -1,0 +1,9 @@
+Terragrunt preamble
+12:00:00.000 STDOUT [/w/env/prod/db] tofu: OpenTofu will perform the following actions:
+12:00:00.001 STDOUT [/w/env/prod/db] tofu:   # aws_db_instance.main will be destroyed
+12:00:00.002 STDOUT [/w/env/prod/db] tofu: Plan: 0 to add, 1 to change, 1 to destroy.
+12:00:00.003 STDOUT [/w/env/prod/app] tofu: OpenTofu will perform the following actions:
+12:00:00.004 STDOUT [/w/env/prod/app] tofu: [1mPlan:[0m 2 to add, 0 to change, 0 to destroy.
+12:00:00.005 STDOUT [/w/env/prod/net] terraform: No changes. Your infrastructure matches the configuration.
+12:00:00.006 STDOUT [/w/env/dev/net] tofu: Warning: Argument is deprecated
+12:00:00.007 STDOUT [/w/env/dev/net] tofu: No changes.

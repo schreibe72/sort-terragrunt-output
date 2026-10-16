@@ -1,0 +1,35 @@
+Terragrunt preamble
+===============================
+⚠️ Changes with destroy
+
+--- Module[0/1/1]: env/prod/db ---
+OpenTofu will perform the following actions:
+  # aws_db_instance.main will be destroyed
+Plan: 0 to add, 1 to change, 1 to destroy.
+
+===============================
+🚀 Changes
+
+--- Module[2/0/0]: env/prod/app ---
+OpenTofu will perform the following actions:
+Plan: 2 to add, 0 to change, 0 to destroy.
+
+===============================
+🕒 Deprecations
+
+--- Module[0/0/0]: env/dev/net ---
+Warning: Argument is deprecated
+No changes.
+
+===============================
+🎉 No Changes
+
+--- Module[0/0/0]: env/dev/net ---
+Warning: Argument is deprecated
+No changes.
+
+--- Module[0/0/0]: env/prod/net ---
+No changes. Your infrastructure matches the configuration.
+
+
+===============================

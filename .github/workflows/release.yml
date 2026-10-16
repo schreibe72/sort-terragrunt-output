@@ -1,0 +1,104 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main, 'rc/**']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  BINARY: sort-terragrunt-output
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go vet ./...
+      - run: go test ./...
+
+  version:
+    if: github.event_name != 'pull_request'
+    needs: test
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      release: ${{ steps.next.outputs.release }}
+      prerelease: ${{ steps.next.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history and tags are needed to compute the version
+      - id: next
+        env:
+          # main publishes final releases, rc/** branches publish release candidates
+          MODE: ${{ github.ref == 'refs/heads/main' && 'release' || 'rc' }}
+        run: .github/scripts/next-version.sh "$MODE" | tee -a "$GITHUB_OUTPUT"
+
+  build:
+    if: needs.version.outputs.release == 'true'
+    needs: version
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          name="${BINARY}_${VERSION}_linux_${GOARCH}"
+          mkdir -p "dist/$name"
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/$name/$BINARY" .
+          tar -C dist -czf "dist/$name.tar.gz" "$name"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.goarch }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create tag and release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: linux-*
+          merge-multiple: true
+      - name: Checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz > checksums.txt
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          flags=()
+          if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+          gh release create "$VERSION" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --generate-notes \
+            "${flags[@]}"
