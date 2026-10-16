@@ -31,6 +31,9 @@ The file names do not contain the version, so the latest release can be
 fetched with a stable URL, e.g.
 `https://github.com/schreibe72/sort-terragrunt-output/releases/latest/download/sort-terragrunt-output_linux_amd64`.
 
+For compatibility with v1.0.0, every release also contains `sort-terragrunt-output`
+without a suffix. It is an identical copy of the `linux_amd64` binary.
+
 Or build it yourself (requires Go, see `go.mod`):
 
 ```sh

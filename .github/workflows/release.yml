@@ -89,7 +89,11 @@ jobs:
           merge-multiple: true
       - name: Checksums
         working-directory: dist
-        run: sha256sum ${BINARY}_linux_* > checksums.txt
+        run: |
+          # v1.0.0 published a single binary without suffix; keep that name
+          # (a copy of the amd64 build) for backwards compatibility
+          cp "${BINARY}_linux_amd64" "${BINARY}"
+          sha256sum "${BINARY}" ${BINARY}_linux_* > checksums.txt
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
