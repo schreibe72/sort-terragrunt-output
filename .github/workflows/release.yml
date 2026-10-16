@@ -66,14 +66,12 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          name="${BINARY}_${VERSION}_linux_${GOARCH}"
-          mkdir -p "dist/$name"
-          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/$name/$BINARY" .
-          tar -C dist -czf "dist/$name.tar.gz" "$name"
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o "dist/${BINARY}_linux_${GOARCH}" .
       - uses: actions/upload-artifact@v7
         with:
           name: linux-${{ matrix.goarch }}
-          path: dist/*.tar.gz
+          path: dist/${{ env.BINARY }}_linux_*
           if-no-files-found: error
 
   release:
@@ -89,7 +87,7 @@ jobs:
           merge-multiple: true
       - name: Checksums
         working-directory: dist
-        run: sha256sum *.tar.gz > checksums.txt
+        run: sha256sum ${BINARY}_linux_* > checksums.txt
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}

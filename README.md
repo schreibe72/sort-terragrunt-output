@@ -18,13 +18,18 @@ before the report.
 
 ## Installation
 
-Download the archive for your architecture (`linux_amd64` or `linux_arm64`)
+Download the binary for your architecture (`linux_amd64` or `linux_arm64`)
 from the [releases](../../releases), together with `checksums.txt`:
 
 ```sh
 sha256sum -c --ignore-missing checksums.txt
-tar -xzf sort-terragrunt-output_<version>_linux_amd64.tar.gz
+chmod +x sort-terragrunt-output_linux_amd64
+mv sort-terragrunt-output_linux_amd64 /usr/local/bin/sort-terragrunt-output
 ```
+
+The file names do not contain the version, so the latest release can be
+fetched with a stable URL, e.g.
+`https://github.com/schreibe72/sort-terragrunt-output/releases/latest/download/sort-terragrunt-output_linux_amd64`.
 
 Or build it yourself (requires Go, see `go.mod`):
 
